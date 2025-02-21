@@ -11,6 +11,7 @@ RESERVOIR_SIZE = 10
 LEARNING_RATE = 0.001
 LOSS_THRESHOLD = 1.5
 TIME_STEPS = 10
+NUM_EPOCHS = 10
 
 def layer_activations_to_badness(layer_activations: torch.Tensor) -> torch.Tensor:
     badness_for_layer = torch.mean(
@@ -69,7 +70,7 @@ class FFReservoir(nn.Module):
 
     def validate_batch(self, images: torch.Tensor, num_classes: int) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = images.shape[0]
-        assert images.shape == (batch_size, self.input_dim - num_classes)
+        assert images.shape == (batch_size, 784)
         
         lowest_energies = torch.full((batch_size,), float('inf'))
         best_labels = torch.zeros(batch_size, dtype=torch.long)
@@ -114,36 +115,38 @@ if __name__ == "__main__":
         loss_threshold=LOSS_THRESHOLD
     )
 
-    for batch_idx, (images, labels) in enumerate(train_loader):
-        # Prepare inputs
-        images_flat = images.view(BATCH_SIZE, -1)
-        labels_onehot = F.one_hot(labels, num_classes=10).float()
-        positive_input = torch.cat([images_flat, labels_onehot], dim=1)
-
-        # Create negative samples with random wrong labels
-        wrong_labels = torch.randint(0, 10, (BATCH_SIZE,))
-        wrong_labels = (wrong_labels + 1 + labels) % 10
-        wrong_labels_onehot = F.one_hot(wrong_labels, num_classes=10).float()
-        negative_input = torch.cat([images_flat, wrong_labels_onehot], dim=1)
-
-        # Reset activations before processing batch
-        reservoir.reset_activations()
+    for epoch in range(NUM_EPOCHS):
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}")
         
-        # Process timesteps
-        for _ in range(TIME_STEPS):
-            reservoir.process_timestep(positive_input, negative_input)
+        for batch_idx, (images, labels) in enumerate(train_loader):
+            # Prepare inputs
+            images_flat = images.view(BATCH_SIZE, -1)
+            labels_onehot = F.one_hot(labels, num_classes=10).float()
+            positive_input = torch.cat([images_flat, labels_onehot], dim=1)
 
-        # Validate every 10 batches
-        if batch_idx % 10 == 0:
-            correct = 0
-            total = 0
+            # Create negative samples with random wrong labels
+            wrong_labels = torch.randint(0, 10, (BATCH_SIZE,))
+            wrong_labels = (wrong_labels + 1 + labels) % 10
+            wrong_labels_onehot = F.one_hot(wrong_labels, num_classes=10).float()
+            negative_input = torch.cat([images_flat, wrong_labels_onehot], dim=1)
+
+            # Reset activations before processing batch
+            reservoir.reset_activations()
             
-            for val_images, val_labels in val_loader:
-                val_images_flat = val_images.view(-1, 784)
-                predictions, energies = reservoir.validate_batch(val_images_flat, num_classes=10)
-                correct += (predictions == val_labels).sum().item()
-                total += val_labels.size(0)
-                
-            accuracy = correct / total
-            print(f"Batch {batch_idx}: Validation Accuracy = {accuracy:.4f}")
+            # Process timesteps
+            for _ in range(TIME_STEPS):
+                reservoir.process_timestep(positive_input, negative_input)
 
+            # Validate every 10 batches
+            if batch_idx % 10 == 0:
+                correct = 0
+                total = 0
+                
+                for val_images, val_labels in val_loader:
+                    val_images_flat = val_images.view(-1, 784)
+                    predictions, energies = reservoir.validate_batch(val_images_flat, num_classes=10)
+                    correct += (predictions == val_labels).sum().item()
+                    total += val_labels.size(0)
+                    
+                accuracy = correct / total
+                print(f"Epoch {epoch+1}, Batch {batch_idx}: Validation Accuracy = {accuracy:.4f}")
