@@ -12,7 +12,7 @@ RESERVOIR_SIZE = 1000
 LEARNING_RATE = 0.0001
 LOSS_THRESHOLD = 1.5
 TIME_STEPS = 10
-NUM_EPOCHS = 10
+NUM_EPOCHS = 1000
 
 def layer_activations_to_badness(layer_activations: torch.Tensor) -> torch.Tensor:
     badness_for_layer = torch.mean(
@@ -55,7 +55,13 @@ class FFReservoir(nn.Module):
 
         self.activations = F.leaky_relu(x_pos).detach()
         assert self.activations.shape == (self.batch_size, self.reservoir_size)
-        
+
+        # # Store L2 norms of activations back in activations.
+        # layer_norm = torch.norm(self.activations, dim=1, p=2)
+        # layer_norm = layer_norm.unsqueeze(1).repeat(1, self.reservoir_size)
+        # assert layer_norm.shape == (self.batch_size, self.reservoir_size)
+        # self.activations = self.activations / layer_norm
+
         return layer_activations_to_badness(x_pos)
 
     def compute_loss(self, pos_act: torch.Tensor, neg_act: torch.Tensor) -> torch.Tensor:
