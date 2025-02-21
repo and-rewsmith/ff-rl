@@ -1,0 +1,29 @@
+name: Python Linting
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v3
+      with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.11
+
+    - name: Run PEP 8 Compliance Check
+      run: ./scripts/devops/pep8.sh
+
+    - name: Run mypy linting
+      run: ./scripts/devops/mypy.sh
+    

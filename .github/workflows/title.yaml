@@ -1,0 +1,23 @@
+name: "PR Title Check"
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+jobs:
+  check-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR Title
+        run: |
+          title="${{ github.event.pull_request.title }}"
+          correct_format_regex='^\[(feat|fix|docs|style|refactor|chore|perf|test|build|ci|revert)\]: .*' # adjust your regex as necessary
+
+          if [[ ! "${title}" =~ ${correct_format_regex} ]]; then
+            echo "Error: Invalid PR Title '${title}'"
+            echo "PR title must start with one of the following prefixes, enclosed in brackets: '[feat]:', '[fix]:', '[docs]:', '[style]:', '[refactor]:', '[chore]:', '[perf]:', '[test]:', '[build]:', '[ci]:', '[revert]:'"
+            exit 1
+          fi
