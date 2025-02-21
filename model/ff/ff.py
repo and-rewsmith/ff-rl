@@ -27,7 +27,7 @@ class FFReservoir(nn.Module):
             reservoir_size: int,
             batch_size: int,
             input_dim: int,
-            learning_rate: int,
+            learning_rate: float,
             loss_threshold: float
     ) -> None:
         super().__init__()
