@@ -45,17 +45,22 @@ class FFReservoir(nn.Module):
             self.optimizer.zero_grad()
 
         x_pos = torch.cat((sensory_input, self.activations), dim=1)
-        x_pos = self.weights(x_pos)
+        x_pos = F.leaky_relu(self.weights(x_pos))
         x_neg = torch.cat((negative_input, self.activations), dim=1)
-        x_neg = self.weights(x_neg)
+        x_neg = F.leaky_relu(self.weights(x_neg))
 
         loss = self.compute_loss(pos_act=x_pos, neg_act=x_neg)
         if training:
             loss.backward()
             self.optimizer.step()
 
-        self.activations = F.leaky_relu(x_pos).detach()
-        assert self.activations.shape == (self.batch_size, self.reservoir_size)
+        # 2 step grad descent
+        # x_pos = torch.cat((sensory_input, self.activations.detach()), dim=1)
+        # x_pos = F.leaky_relu(self.weights(x_pos))
+        # self.activations = x_pos
+        # assert self.activations.shape == (self.batch_size, self.reservoir_size)
+
+        self.activations = x_pos.detach()
 
         # # Store L2 norms of activations back in activations.
         # layer_norm = torch.norm(self.activations, dim=1, p=2)
@@ -151,7 +156,7 @@ if __name__ == "__main__":
                 reservoir.process_timestep(positive_input, negative_input)
 
             # Validate every 10 batches
-            if batch_idx % 10 == 0:
+            if batch_idx % 100 == 0:
                 correct = 0
                 total = 0
                 
