@@ -5,10 +5,11 @@ from torch.nn import functional as F
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 
+DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
 BATCH_SIZE = 500
-RESERVOIR_SIZE = 10
-LEARNING_RATE = 0.001
+RESERVOIR_SIZE = 1000
+LEARNING_RATE = 0.0001
 LOSS_THRESHOLD = 1.5
 TIME_STEPS = 10
 NUM_EPOCHS = 10
@@ -29,11 +30,11 @@ class FFReservoir(nn.Module):
 
         self.weights = nn.Linear(input_dim+reservoir_size, reservoir_size, bias=True)
         self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
-        self.activations = torch.zeros(batch_size, reservoir_size)
+        self.activations = torch.zeros(batch_size, reservoir_size, device=DEVICE)
         self.optimizer = torch.optim.AdamW(self.weights.parameters(), lr=learning_rate)
 
     def reset_activations(self) -> None:
-        self.activations = torch.zeros(self.batch_size, self.reservoir_size)
+        self.activations = torch.zeros(self.batch_size, self.reservoir_size, device=DEVICE)
 
     def process_timestep(self, sensory_input: torch.Tensor, negative_input: torch.Tensor, training: bool = True) -> torch.Tensor:
         batch_size, input_dim = sensory_input.shape
@@ -72,18 +73,19 @@ class FFReservoir(nn.Module):
         batch_size = images.shape[0]
         assert images.shape == (batch_size, 784)
         
-        lowest_energies = torch.full((batch_size,), float('inf'))
-        best_labels = torch.zeros(batch_size, dtype=torch.long)
+        lowest_energies = torch.full((batch_size,), float('inf'), device=DEVICE)
+        best_labels = torch.zeros(batch_size, dtype=torch.long, device=DEVICE)
         
         for label in range(num_classes):
-            labels_onehot = F.one_hot(torch.full((batch_size,), label, dtype=torch.long), num_classes=num_classes).float()
+            labels_onehot = F.one_hot(torch.full((batch_size,), label, dtype=torch.long, device=DEVICE), 
+                                    num_classes=num_classes).float()
             assert labels_onehot.shape == (batch_size, num_classes)
             
             batch_input = torch.cat([images, labels_onehot], dim=1)
             assert batch_input.shape == (batch_size, self.input_dim)
             
             self.reset_activations()
-            cumulative_energy = torch.zeros(batch_size)
+            cumulative_energy = torch.zeros(batch_size, device=DEVICE)
             
             for _ in range(TIME_STEPS):
                 energy = self.process_timestep(batch_input, batch_input, training=False)
@@ -113,19 +115,23 @@ if __name__ == "__main__":
         input_dim=INPUT_DIM,
         learning_rate=LEARNING_RATE,
         loss_threshold=LOSS_THRESHOLD
-    )
+    ).to(DEVICE)
 
     for epoch in range(NUM_EPOCHS):
         print(f"Epoch {epoch+1}/{NUM_EPOCHS}")
         
         for batch_idx, (images, labels) in enumerate(train_loader):
+            # Move batch to device
+            images = images.to(DEVICE)
+            labels = labels.to(DEVICE)
+            
             # Prepare inputs
             images_flat = images.view(BATCH_SIZE, -1)
             labels_onehot = F.one_hot(labels, num_classes=10).float()
             positive_input = torch.cat([images_flat, labels_onehot], dim=1)
 
             # Create negative samples with random wrong labels
-            wrong_labels = torch.randint(0, 10, (BATCH_SIZE,))
+            wrong_labels = torch.randint(0, 10, (BATCH_SIZE,), device=DEVICE)
             wrong_labels = (wrong_labels + 1 + labels) % 10
             wrong_labels_onehot = F.one_hot(wrong_labels, num_classes=10).float()
             negative_input = torch.cat([images_flat, wrong_labels_onehot], dim=1)
@@ -143,6 +149,8 @@ if __name__ == "__main__":
                 total = 0
                 
                 for val_images, val_labels in val_loader:
+                    val_images = val_images.to(DEVICE)
+                    val_labels = val_labels.to(DEVICE)
                     val_images_flat = val_images.view(-1, 784)
                     predictions, energies = reservoir.validate_batch(val_images_flat, num_classes=10)
                     correct += (predictions == val_labels).sum().item()
