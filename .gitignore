@@ -1,0 +1,37 @@
+env/
+
+# generated dirs
+*.egg-info
+__pycache__
+**/__pycache__
+.DS_Store
+.mypy_cache
+.pytest_cache
+.vscode
+*.swp
+data/
+
+# ignore dirs
+wandb/
+env/
+output/
+outputs/
+out/
+weights/*.pt
+generated_artifacts/*
+!generated_artifacts/README.md
+
+# random ever growing list of random stuff
+*.csv
+ci_log.txt
+running_log.log
+*.log
+*.prof
+baseline.prof
+running_log*
+*.log
+attention_mask.png
+padding_mask.png
+llm_plan
+LLMs-Planning/
+INSTANCE-CUSTOM.PDDL
