@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
 BATCH_SIZE = 500
-RESERVOIR_SIZE = 1000
+RESERVOIR_SIZE = 100
 LEARNING_RATE = 0.0001
 LOSS_THRESHOLD = 1.5
 TIME_STEPS = 10
@@ -29,7 +29,8 @@ class FFReservoir(nn.Module):
         self.loss_threshold = loss_threshold
 
         self.weights = nn.Linear(input_dim+reservoir_size, reservoir_size, bias=True)
-        self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
+        # self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
+        nn.init.sparse_(self.weights.weight, sparsity=0.9)
         self.activations = torch.zeros(batch_size, reservoir_size, device=DEVICE)
         self.optimizer = torch.optim.AdamW(self.weights.parameters(), lr=learning_rate)
 
