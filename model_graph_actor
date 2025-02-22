@@ -1,0 +1,73 @@
+digraph {
+	graph [size="12,12"]
+	node [align=left fontname=monospace fontsize=10 height=0.2 ranksep=0.1 shape=box style=filled]
+	5373118896 [label="
+ ()" fillcolor=darkolivegreen1]
+	5373021152 [label=MeanBackward0]
+	5373021296 -> 5373021152
+	5373021296 [label=MulBackward0]
+	5373021440 -> 5373021296
+	5373021440 [label=NegBackward0]
+	5373021488 -> 5373021440
+	5373021488 [label=SqueezeBackward1]
+	5373021584 -> 5373021488
+	5373021584 [label=GatherBackward0]
+	5373021680 -> 5373021584
+	5373021680 [label=LogBackward0]
+	5373021776 -> 5373021680
+	5373021776 [label=ClampBackward1]
+	5373021872 -> 5373021776
+	5373021872 [label=DivBackward0]
+	5373021968 -> 5373021872
+	5373021968 [label=SoftmaxBackward0]
+	5373022112 -> 5373021968
+	5373022112 [label=AddmmBackward0]
+	5373022208 -> 5373022112
+	4523853968 [label="net.4.bias
+ (3)" fillcolor=lightblue]
+	4523853968 -> 5373022208
+	5373022208 [label=AccumulateGrad]
+	5373022160 -> 5373022112
+	5373022160 [label=ReluBackward0]
+	5373022304 -> 5373022160
+	5373022304 [label=AddmmBackward0]
+	5373022496 -> 5373022304
+	4523852240 [label="net.2.bias
+ (192)" fillcolor=lightblue]
+	4523852240 -> 5373022496
+	5373022496 [label=AccumulateGrad]
+	5373022448 -> 5373022304
+	5373022448 [label=ReluBackward0]
+	5373022592 -> 5373022448
+	5373022592 [label=AddmmBackward0]
+	5373022784 -> 5373022592
+	4523852432 [label="net.0.bias
+ (192)" fillcolor=lightblue]
+	4523852432 -> 5373022784
+	5373022784 [label=AccumulateGrad]
+	5373022736 -> 5373022592
+	5373022736 [label=TBackward0]
+	5373022832 -> 5373022736
+	4523852528 [label="net.0.weight
+ (192, 75)" fillcolor=lightblue]
+	4523852528 -> 5373022832
+	5373022832 [label=AccumulateGrad]
+	5373022400 -> 5373022304
+	5373022400 [label=TBackward0]
+	5373022880 -> 5373022400
+	4523852144 [label="net.2.weight
+ (192, 192)" fillcolor=lightblue]
+	4523852144 -> 5373022880
+	5373022880 [label=AccumulateGrad]
+	5373022016 -> 5373022112
+	5373022016 [label=TBackward0]
+	5373022688 -> 5373022016
+	4523852336 [label="net.4.weight
+ (3, 192)" fillcolor=lightblue]
+	4523852336 -> 5373022688
+	5373022688 [label=AccumulateGrad]
+	5373021920 -> 5373021872
+	5373021920 [label=SumBackward1]
+	5373021968 -> 5373021920
+	5373021152 -> 5373118896
+}
