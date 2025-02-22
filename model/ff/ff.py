@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 
-DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'mps')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'mps')
 INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
 BATCH_SIZE = 500
 RESERVOIR_SIZE = 1000

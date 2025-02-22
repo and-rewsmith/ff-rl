@@ -27,15 +27,15 @@ else:
     raise RuntimeError("No GPU (CUDA or MPS) available")
 
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
-NUM_ENVS = 25
-NUM_STEPS = 20000
-EVAL_FREQ = 19000
+NUM_ENVS = 10
+NUM_STEPS = 15000
+EVAL_FREQ = 14000
 RENDER_EVAL = False
 WINDOW_SIZE = 50
 
 HIDDEN_SIZE = 128
-ACTOR_LR = 1e-5
-CRITIC_LR = 2e-5
+ACTOR_LR = 1e-6
+CRITIC_LR = 2e-6
 
 RESERVOIR_SIZE = 1000
 STATE_LR = 1e-6
