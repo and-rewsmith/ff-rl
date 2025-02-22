@@ -14,20 +14,18 @@ import matplotlib.pyplot as plt
 import pygame
 from tqdm import tqdm
 from torchviz import make_dot
-torch.manual_seed(0)
 
-# Parameters
+HIDDEN_SIZE = 256
 NUM_ENVS = 10
-HIDDEN_SIZE = 128
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 ACTOR_LR = 1e-6
 CRITIC_LR = 1e-6
-NUM_STEPS = 20000
-EVAL_FREQ = 19900
-WINDOW_SIZE = 100
-RENDER_EVAL = True
+NUM_STEPS = 16000
+EVAL_FREQ = 15900
+WINDOW_SIZE = 20
+RENDER_EVAL = False
 
-env_name = 'MiniGrid-Empty-8x8-v0'
+env_name = 'MiniGrid-Empty-5x5-v0'
 
 
 def make_env(render_mode="rgb_array", max_steps=100) -> gym.Env:
@@ -37,12 +35,7 @@ def make_env(render_mode="rgb_array", max_steps=100) -> gym.Env:
     env = FlattenObservation(env)
     return env
 
-# Get observation size from environment
-test_env = make_env()
-OBS_SIZE = test_env.observation_space.shape[0]
-test_env.close()
 
-# Networks
 class Actor(nn.Module):
     def __init__(self, obs_size: int, hidden_size: int, num_actions: int):
         super().__init__()
@@ -56,6 +49,7 @@ class Actor(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.softmax(self.net(x), dim=-1)
+
 
 class Critic(nn.Module):
     def __init__(self, obs_size: int, hidden_size: int):
@@ -73,9 +67,15 @@ class Critic(nn.Module):
 
 
 def main() -> None:
+    torch.manual_seed(0)
+
+    # Get observation size from environment
+    test_env = make_env()
+    OBS_SIZE = test_env.observation_space.shape[0]
+    test_env.close()
+
     # Initialize pygame for visualization
     pygame.init()
-    window = None
 
     # Initialize networks and environments
     actor = Actor(OBS_SIZE, HIDDEN_SIZE, NUM_ACTIONS)
@@ -102,7 +102,8 @@ def main() -> None:
     current_rewards = np.zeros(NUM_ENVS)
     episode_steps = np.zeros(NUM_ENVS)
 
-    last_agent_pos = [None for _ in range(NUM_ENVS)]
+    # NOTE: uncomment for dense reward
+    # last_agent_pos = [None for _ in range(NUM_ENVS)]
     for step in tqdm(range(NUM_STEPS)):
         # Actor logic
         probs = actor(obs)
@@ -117,13 +118,7 @@ def main() -> None:
         # Environment step
         next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
-        # this is an unbatched concept
-        # if 8 in observation["image"]:
-        #     reward += 0.005
-        # if action.item() == 2 and old_pos == new_pos:
-        #     reward -= 0.01
-
-        # apply to batched
+        # NOTE: dense reward
         # agent_pos = env.get_attr("agent_pos")
         # for i in range(NUM_ENVS):
         #     if 8 in next_obs[i]:
@@ -163,28 +158,26 @@ def main() -> None:
 
         critic_loss = td_error.pow(2).mean()
         actor_loss = (-dist.log_prob(actions) * td_error.detach()).mean()
+
+        # NOTE: actor comp graph
         # dot = make_dot(actor_loss, params=dict(actor.named_parameters()))
         # dot.render('model_graph_actor', format='png')
         # input()
 
-        # critic_loss = F.mse_loss(values, rewards)
-        # advantages = rewards - values.detach()
-        # actor_loss = -(log_probs * advantages).mean()
+        # NOTE: critic comp graph
+        # dot = make_dot(critic_loss, params=dict(critic.named_parameters()))
+        # dot.render('model_graph_critic', format='png')
+        # input()
 
         # Update networks
         optimizer_critic.zero_grad()
         critic_loss.backward()
-        # clip critic loss
-        # torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-        # dot = make_dot(critic_loss, params=dict(critic.named_parameters()))
-        # dot.render('model_graph_critic', format='png')
-        # input()
+        torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
         optimizer_critic.step()
 
         optimizer_actor.zero_grad()
         actor_loss.backward()
-        # clip actor loss
-        # torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
         optimizer_actor.step()
 
         # Store losses
@@ -192,7 +185,7 @@ def main() -> None:
         critic_losses.append(critic_loss.item())
 
         # Evaluation
-        if (step+1) % EVAL_FREQ == 0:
+        if (step+1) % EVAL_FREQ == 0 and RENDER_EVAL:
             print("---------------------------")
             eval_obs, _ = eval_env.reset(seed=0)
             eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
@@ -228,7 +221,7 @@ def main() -> None:
         total_steps += NUM_ENVS
 
     # Plot results
-    plt.figure(figsize=(15, 4))
+    plt.figure(figsize=(15, 3))
 
     plt.subplot(141)
     plt.plot(actor_losses)
@@ -243,21 +236,14 @@ def main() -> None:
     plt.ylabel("Loss")
 
     plt.subplot(143)
-    window = 100  # Smoothing window
-    if len(episode_rewards) >= window:
-        smoothed_rewards = np.convolve(episode_rewards, np.ones(window)/window, mode='valid')
+    print(len(episode_rewards))
+    input()
+    if len(episode_rewards) >= WINDOW_SIZE:
+        smoothed_rewards = np.convolve(episode_rewards, np.ones(WINDOW_SIZE)/WINDOW_SIZE, mode='valid')
         plt.plot(smoothed_rewards)
     plt.title("Episode Rewards")
     plt.xlabel("Episode")
     plt.ylabel("Reward")
-
-    plt.subplot(144)
-    if len(success_rate) >= window:
-        smoothed_success = np.convolve(success_rate, np.ones(window)/window, mode='valid')
-        plt.plot(smoothed_success)
-    plt.title("Success Rate")
-    plt.xlabel("Episode")
-    plt.ylabel("Success Rate")
 
     plt.tight_layout()
     plt.show()
