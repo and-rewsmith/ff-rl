@@ -16,6 +16,8 @@ from tqdm import tqdm
 from torchviz import make_dot
 import numpy.typing as npt
 
+from model.ff.ff import FFReservoir
+
 # Device configuration
 if torch.cuda.is_available():
     DEVICE = torch.device('cuda')
@@ -24,17 +26,22 @@ elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
 else:
     raise RuntimeError("No GPU (CUDA or MPS) available")
 
-HIDDEN_SIZE = 128
-NUM_ENVS = 50
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
-ACTOR_LR = 1e-6
-CRITIC_LR = 2e-6
+NUM_ENVS = 2
 NUM_STEPS = 2000
 EVAL_FREQ = 1900
+RENDER_EVAL = False
 WINDOW_SIZE = 50
-RENDER_EVAL = True
 
-env_name = 'MiniGrid-Empty-8x8-v0'
+HIDDEN_SIZE = 128
+ACTOR_LR = 1e-6
+CRITIC_LR = 2e-6
+
+RESERVOIR_SIZE = 1000
+STATE_LR = 1e-6
+STATE_LOSS_THRESHOLD = 1.5
+
+env_name = 'MiniGrid-Empty-5x5-v0'
 
 
 def make_env(render_mode: str | None = "rgb_array", max_steps: int = 100) -> gym.Env:
@@ -125,10 +132,13 @@ def main() -> None:
     eval_env = None
     try:
         # Initialize networks and environments
-        actor = Actor(OBS_SIZE, HIDDEN_SIZE, NUM_ACTIONS).to(DEVICE)
-        critic = Critic(OBS_SIZE, HIDDEN_SIZE).to(DEVICE)
+        actor = Actor(RESERVOIR_SIZE, HIDDEN_SIZE, NUM_ACTIONS).to(DEVICE)
+        critic = Critic(RESERVOIR_SIZE, HIDDEN_SIZE).to(DEVICE)
+        state = FFReservoir(reservoir_size=RESERVOIR_SIZE, batch_size=NUM_ENVS, input_dim=OBS_SIZE+3+1,
+                            learning_rate=STATE_LR, loss_threshold=STATE_LOSS_THRESHOLD).to(DEVICE)
         optimizer_actor = optim.Adam(actor.parameters(), lr=ACTOR_LR)
         optimizer_critic = optim.Adam(critic.parameters(), lr=CRITIC_LR)
+        optimizer_state = optim.Adam(state.parameters(), lr=STATE_LR)
 
         env = AsyncVectorEnv([lambda: make_env(None, max_steps=100) for _ in range(NUM_ENVS)])
         eval_env = make_env("human", max_steps=100)
@@ -138,7 +148,6 @@ def main() -> None:
 
         # Process observations
         obs_array = np.stack([one_hot_encode_observation(o) for o in obs_array])
-        obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
         # Performance tracking
         episode_rewards = []
@@ -157,13 +166,59 @@ def main() -> None:
             #     optimizer_critic.param_groups[0]['lr'] = optimizer_critic.param_groups[0]['lr'] * 0.1
 
             # Actor logic
-            probs = actor(obs)
+            probs = actor(state.activations.detach())
             dist = Categorical(probs)
             actions = dist.sample()
             log_probs = dist.log_prob(actions)
 
+            obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
+
+            # don't do this for the first step since no steps have been taken, so reward will be unset
+            if step != 0:
+                rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
+
+                # handle pos
+                actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
+                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+
+                # handle neg
+                negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                while (negative_actions == actions).any():
+                    negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
+                sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
+
+                state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
+                state_activations_prev = state.activations.detach().clone()
+            else:
+                rewards = torch.zeros(NUM_ENVS, 1, device=DEVICE)
+
+                # handle pos
+                actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
+                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+
+                # handle neg
+                negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                while (negative_actions == actions).any():
+                    negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
+                sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
+
+                state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
+                state_activations_prev = state.activations.detach().clone()
+
+            # make this append the taken action
+            # append the action to the obs -- for neg action, sample random action but it cannot be same as pos action
+            # pos_obs = torch.cat((obs, actions.unsqueeze(1)), dim=1)
+            # neg_action = torch.randint(0, NUM_ACTIONS, (NUM_ENVS, 1)).to(DEVICE)
+            # while (neg_action == actions.unsqueeze(1)).any():
+            #     neg_action = torch.randint(0, NUM_ACTIONS, (NUM_ENVS, 1)).to(DEVICE)
+            # assert neg_action.shape == (NUM_ENVS, 1)
+            # neg_obs = torch.cat((obs, neg_action), dim=1)
+            # state.process_timestep(pos_obs, neg_obs, training=True)
+
             # Critic logic
-            prev_values_ = critic(obs).squeeze()
+            prev_values_ = critic(state_activations_prev).squeeze()
             assert prev_values_.shape == (NUM_ENVS,)
 
             # Environment step
@@ -173,6 +228,8 @@ def main() -> None:
             truncs: np.ndarray
             infos: dict
             next_obs_array, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
+
+            state_activations_next = state.activations.detach().clone()
 
             # NOTE: dense reward
             # agent_pos = env.get_attr("agent_pos")
@@ -198,6 +255,7 @@ def main() -> None:
                     episode_rewards.append(current_rewards[i])
                     current_rewards[i] = 0
                     episode_steps[i] = 0
+                    state.reset_activations_for_batches(torch.tensor([i], dtype=torch.int))
 
             rewards: torch.Tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)  # type: ignore
 
@@ -207,7 +265,7 @@ def main() -> None:
             assert actions.shape == (NUM_ENVS,)
 
             # calc next values
-            next_values_ = critic(next_obs).squeeze()
+            next_values_ = critic(state_activations_next).squeeze()
             assert next_values_.shape == (NUM_ENVS,)
             td_error = rewards + (0.99 * next_values_ * (1 - torch.tensor(dones,
                                   dtype=torch.float32).to(DEVICE))) - prev_values_

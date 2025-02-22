@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 
-DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cuda:1' if torch.cuda.is_available() else 'mps')
 INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
 BATCH_SIZE = 500
 RESERVOIR_SIZE = 1000
@@ -45,6 +45,10 @@ class FFReservoir(nn.Module):
     def reset_activations(self) -> None:
         self.activations = torch.zeros(self.batch_size, self.reservoir_size, device=DEVICE)
 
+    def reset_activations_for_batches(self, batch_indices: torch.Tensor) -> None:
+        self.activations[batch_indices] = torch.zeros(
+            len(batch_indices), self.reservoir_size, device=DEVICE).detach().clone()
+
     def process_timestep(
             self,
             sensory_input: torch.Tensor,
@@ -67,7 +71,7 @@ class FFReservoir(nn.Module):
             loss.backward()
             self.optimizer.step()
 
-        self.activations = x_pos.detach()
+        self.activations = x_pos.clone().detach()
 
         return layer_activations_to_badness(x_pos)
 
@@ -91,8 +95,8 @@ class FFReservoir(nn.Module):
 
         for label in range(num_classes):
             labels_onehot = F.one_hot(
-                    torch.full((batch_size,), label, dtype=torch.long, device=DEVICE),
-                    num_classes=num_classes).float()
+                torch.full((batch_size,), label, dtype=torch.long, device=DEVICE),
+                num_classes=num_classes).float()
             assert labels_onehot.shape == (batch_size, num_classes)
 
             batch_input = torch.cat([images, labels_onehot], dim=1)
