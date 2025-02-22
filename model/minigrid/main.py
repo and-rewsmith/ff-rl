@@ -25,12 +25,12 @@ else:
     raise RuntimeError("No GPU (CUDA or MPS) available")
 
 HIDDEN_SIZE = 128
-NUM_ENVS = 25
+NUM_ENVS = 50
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 ACTOR_LR = 1e-6
 CRITIC_LR = 2e-6
-NUM_STEPS = 20000
-EVAL_FREQ = 19000
+NUM_STEPS = 2000
+EVAL_FREQ = 1900
 WINDOW_SIZE = 50
 RENDER_EVAL = False
 
@@ -106,6 +106,7 @@ def one_hot_encode_observation(obs: np.ndarray) -> torch.Tensor:
 
 
 def main() -> None:
+    print("USING GPU:", DEVICE)
     torch.manual_seed(0)
 
     # Get observation size from environment
@@ -147,10 +148,10 @@ def main() -> None:
     # NOTE: uncomment for dense reward
     last_agent_pos = [None for _ in range(NUM_ENVS)]
     for step in tqdm(range(NUM_STEPS)):
-        if step == 5000:
-            # lower learning rate
-            optimizer_actor.param_groups[0]['lr'] = 1e-7
-            optimizer_critic.param_groups[0]['lr'] = 2e-7
+        # NOTE: lower learning rate by 10x (dynamic)
+        # if step == 5000:
+        #     optimizer_actor.param_groups[0]['lr'] = optimizer_actor.param_groups[0]['lr'] * 0.1
+        #     optimizer_critic.param_groups[0]['lr'] = optimizer_critic.param_groups[0]['lr'] * 0.1
 
         # Actor logic
         probs = actor(obs)
@@ -166,10 +167,10 @@ def main() -> None:
         next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
         # NOTE: dense reward
-        agent_pos = env.get_attr("agent_pos")
-        for i in range(NUM_ENVS):
-            if 8 in next_obs[i]:
-                rewards[i] += 0.005
+        # agent_pos = env.get_attr("agent_pos")
+        # for i in range(NUM_ENVS):
+        #     if 8 in next_obs[i]:
+        #         rewards[i] += 0.005
             # if last_agent_pos[i] is not None:
             #     if agent_pos[i] == last_agent_pos[i]:
             #         rewards[i] -= 0.01
