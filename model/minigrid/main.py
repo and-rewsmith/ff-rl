@@ -138,7 +138,7 @@ def main() -> None:
 
         # Process observations
         obs_array = np.stack([one_hot_encode_observation(o) for o in obs_array])
-        obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE) # type: ignore
+        obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
         # Performance tracking
         episode_rewards = []
@@ -186,7 +186,7 @@ def main() -> None:
 
             # Process the new observations
             next_obs_array = np.stack([one_hot_encode_observation(o) for o in next_obs_array])
-            next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE) # type: ignore
+            next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
             # Update episode rewards and steps
             current_rewards += rewards
@@ -199,7 +199,7 @@ def main() -> None:
                     current_rewards[i] = 0
                     episode_steps[i] = 0
 
-            rewards: torch.Tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE) # type: ignore
+            rewards: torch.Tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)  # type: ignore
 
             # Loss calculations
             assert rewards.shape == (NUM_ENVS,)
