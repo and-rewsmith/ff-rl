@@ -35,3 +35,4 @@ padding_mask.png
 llm_plan
 LLMs-Planning/
 INSTANCE-CUSTOM.PDDL
+requirements_tk.txt
