@@ -15,6 +15,7 @@ import pygame
 from tqdm import tqdm
 from torchviz import make_dot
 import numpy.typing as npt
+import wandb
 
 from model.ff.ff import FFReservoir
 
@@ -38,7 +39,7 @@ ACTOR_LR = 1e-6
 CRITIC_LR = 2e-6
 
 RESERVOIR_SIZE = 1000
-STATE_LR = 1e-6
+STATE_LR = 1e-4
 STATE_LOSS_THRESHOLD = 1.5
 
 env_name = 'MiniGrid-Empty-5x5-v0'
@@ -111,10 +112,37 @@ def one_hot_encode_observation(obs: np.ndarray) -> torch.Tensor:
 
     return torch.cat(encoded).float()
 
+def init_wandb() -> None:
+    wandb.init(
+        project="ff-rl",
+        config={
+            "architecture": "Initial",
+            "dataset": "Minigrid-untagged",
+            "num_envs": NUM_ENVS,
+            "num_steps": NUM_STEPS,
+            "eval_freq": EVAL_FREQ,
+            "render_eval": RENDER_EVAL,
+            "hidden_size": HIDDEN_SIZE,
+            "actor_lr": ACTOR_LR,
+            "critic_lr": CRITIC_LR,
+            "reservoir_size": RESERVOIR_SIZE,
+            "state_lr": STATE_LR,
+            "state_loss_threshold": STATE_LOSS_THRESHOLD,
+            "env_name": env_name,
+            "window_size": WINDOW_SIZE,
+            "device": DEVICE,
+            "num_actions": NUM_ACTIONS,
+        }
+    )
+
+
 
 def main() -> None:
     print("USING GPU:", DEVICE)
     torch.manual_seed(0)
+
+    # Initialize wandb
+    init_wandb()
 
     # Get observation size from environment
     test_env = make_env()
@@ -135,7 +163,7 @@ def main() -> None:
         actor = Actor(RESERVOIR_SIZE, HIDDEN_SIZE, NUM_ACTIONS).to(DEVICE)
         critic = Critic(RESERVOIR_SIZE, HIDDEN_SIZE).to(DEVICE)
         state = FFReservoir(reservoir_size=RESERVOIR_SIZE, batch_size=NUM_ENVS, input_dim=OBS_SIZE+3+1,
-                            learning_rate=STATE_LR, loss_threshold=STATE_LOSS_THRESHOLD).to(DEVICE)
+                            learning_rate=STATE_LR, loss_threshold=STATE_LOSS_THRESHOLD, device=DEVICE).to(DEVICE)
         optimizer_actor = optim.Adam(actor.parameters(), lr=ACTOR_LR)
         optimizer_critic = optim.Adam(critic.parameters(), lr=CRITIC_LR)
         optimizer_state = optim.Adam(state.parameters(), lr=STATE_LR)
@@ -173,7 +201,7 @@ def main() -> None:
 
             obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
-            # don't do this for the first step since no steps have been taken, so reward will be unset
+            # pass through ff
             if step != 0:
                 rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
             else:
@@ -192,6 +220,13 @@ def main() -> None:
 
             state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
             state_activations_prev = state.activations.detach().clone()
+
+            # add to existing rewards a state reward that is magnitude of activations in EBM
+            from model.ff.ff import layer_activations_to_badness
+            state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_prev).detach().unsqueeze(1))
+            assert state_rewards.shape == (NUM_ENVS, 1)
+            assert rewards.shape == (NUM_ENVS, 1)
+            rewards += state_rewards
 
             # make this append the taken action
             # append the action to the obs -- for neg action, sample random action but it cannot be same as pos action
@@ -215,7 +250,37 @@ def main() -> None:
             infos: dict
             next_obs_array, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
-            state_activations_next = state.activations.detach().clone()
+            if True:
+                rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
+                # log the raw reward (take into account the batch dimension)
+                wandb.log({
+                    "raw_reward": rewards.squeeze().mean().item()
+                })
+
+                # handle pos
+                actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
+                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+
+                # handle neg
+                negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                while (negative_actions == actions).any():
+                    negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+                negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
+                sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
+
+                state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
+                state_activations_prev = state.activations.detach().clone()
+
+                # add to existing rewards a state reward that is magnitude of activations in EBM
+                from model.ff.ff import layer_activations_to_badness
+                state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_prev).detach().unsqueeze(1))
+                assert state_rewards.shape == (NUM_ENVS, 1)
+                assert rewards.shape == (NUM_ENVS, 1)
+                rewards += state_rewards
+                rewards = rewards.squeeze()
+
+                state_activations_next = state.activations.detach().clone()
+
 
             # NOTE: dense reward
             # agent_pos = env.get_attr("agent_pos")
@@ -227,12 +292,13 @@ def main() -> None:
             #             rewards[i] -= 0.01
             #     last_agent_pos[i] = agent_pos[i]
 
+
             # Process the new observations
             next_obs_array = np.stack([one_hot_encode_observation(o) for o in next_obs_array])
             next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
             # Update episode rewards and steps
-            current_rewards += rewards
+            current_rewards += rewards.squeeze().cpu().numpy()
             episode_steps += 1
 
             # Handle episode completion
@@ -280,6 +346,15 @@ def main() -> None:
             actor_loss.backward()
             torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
             optimizer_actor.step()
+
+            # Log to wandb
+            wandb.log({
+                "actor_loss": actor_loss.item(),
+                "critic_loss": critic_loss.item(),
+                "ff_loss": state.last_loss,  # Assuming FFReservoir stores its last loss
+                "episode_reward": np.mean(episode_rewards[-NUM_ENVS:]) if episode_rewards else 0,
+                "step": step
+            })
 
             # Store losses
             actor_losses.append(actor_loss.item())

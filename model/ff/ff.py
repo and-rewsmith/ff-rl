@@ -5,15 +5,6 @@ from torch.nn import functional as F
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'mps')
-INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
-BATCH_SIZE = 500
-RESERVOIR_SIZE = 1000
-LEARNING_RATE = 0.0001
-LOSS_THRESHOLD = 1.5
-TIME_STEPS = 10
-NUM_EPOCHS = 1000
-
 
 def layer_activations_to_badness(layer_activations: torch.Tensor) -> torch.Tensor:
     badness_for_layer = torch.mean(
@@ -28,7 +19,8 @@ class FFReservoir(nn.Module):
             batch_size: int,
             input_dim: int,
             learning_rate: float,
-            loss_threshold: float
+            loss_threshold: float,
+            device: torch.device
     ) -> None:
         super().__init__()
         self.reservoir_size = reservoir_size
@@ -39,15 +31,19 @@ class FFReservoir(nn.Module):
 
         self.weights = nn.Linear(input_dim+reservoir_size, reservoir_size, bias=True)
         self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
-        self.activations = torch.zeros(batch_size, reservoir_size, device=DEVICE)
+        self.activations = torch.zeros(batch_size, reservoir_size, device=device)
         self.optimizer = torch.optim.AdamW(self.weights.parameters(), lr=learning_rate)
 
+        self.last_loss = 0
+
+        self.device = device
+
     def reset_activations(self) -> None:
-        self.activations = torch.zeros(self.batch_size, self.reservoir_size, device=DEVICE)
+        self.activations = torch.zeros(self.batch_size, self.reservoir_size, device=self.device)
 
     def reset_activations_for_batches(self, batch_indices: torch.Tensor) -> None:
         self.activations[batch_indices] = torch.zeros(
-            len(batch_indices), self.reservoir_size, device=DEVICE).detach().clone()
+            len(batch_indices), self.reservoir_size, device=self.device).detach().clone()
 
     def process_timestep(
             self,
@@ -67,6 +63,8 @@ class FFReservoir(nn.Module):
         x_neg = F.leaky_relu(self.weights(x_neg))
 
         loss = self.compute_loss(pos_act=x_pos, neg_act=x_neg)
+        self.last_loss = loss.item()
+
         if training:
             loss.backward()
             self.optimizer.step()
@@ -90,12 +88,12 @@ class FFReservoir(nn.Module):
         batch_size = images.shape[0]
         assert images.shape == (batch_size, 784)
 
-        lowest_energies = torch.full((batch_size,), float('inf'), device=DEVICE)
-        best_labels = torch.zeros(batch_size, dtype=torch.long, device=DEVICE)
+        lowest_energies = torch.full((batch_size,), float('inf'), device=self.device)
+        best_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
 
         for label in range(num_classes):
             labels_onehot = F.one_hot(
-                torch.full((batch_size,), label, dtype=torch.long, device=DEVICE),
+                torch.full((batch_size,), label, dtype=torch.long, device=self.device),
                 num_classes=num_classes).float()
             assert labels_onehot.shape == (batch_size, num_classes)
 
@@ -103,7 +101,7 @@ class FFReservoir(nn.Module):
             assert batch_input.shape == (batch_size, self.input_dim)
 
             self.reset_activations()
-            cumulative_energy = torch.zeros(batch_size, device=DEVICE)
+            cumulative_energy = torch.zeros(batch_size, device=self.device)
 
             for _ in range(TIME_STEPS):
                 energy = self.process_timestep(batch_input, batch_input, training=False)
@@ -117,6 +115,15 @@ class FFReservoir(nn.Module):
 
 
 if __name__ == "__main__":
+    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'mps')
+    INPUT_DIM = 794  # 784 image pixels + 10 for one-hot label
+    BATCH_SIZE = 500
+    RESERVOIR_SIZE = 1000
+    LEARNING_RATE = 0.0001
+    LOSS_THRESHOLD = 1.5
+    TIME_STEPS = 10
+    NUM_EPOCHS = 1000
+
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -133,7 +140,8 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE,
         input_dim=INPUT_DIM,
         learning_rate=LEARNING_RATE,
-        loss_threshold=LOSS_THRESHOLD
+        loss_threshold=LOSS_THRESHOLD,
+        device=DEVICE
     ).to(DEVICE)
 
     for epoch in range(NUM_EPOCHS):
