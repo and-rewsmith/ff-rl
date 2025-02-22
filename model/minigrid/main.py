@@ -17,21 +17,21 @@ from torchviz import make_dot
 torch.manual_seed(0)
 
 # Parameters
-NUM_ENVS = 30
-HIDDEN_SIZE = 192
+NUM_ENVS = 10
+HIDDEN_SIZE = 128
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 ACTOR_LR = 1e-6
-CRITIC_LR = 1e-6
-NUM_STEPS = 2000
-EVAL_FREQ = 900
+CRITIC_LR = 5e-6
+NUM_STEPS = 6000
+EVAL_FREQ = 3900
 WINDOW_SIZE = 100
 RENDER_EVAL = True
 
-env_name = 'MiniGrid-Empty-5x5-v0'
+env_name = 'MiniGrid-Empty-8x8-v0'
 
 
-def make_env(render_mode="rgb_array") -> gym.Env:
-    env = gym.make(env_name, render_mode=render_mode)
+def make_env(render_mode="rgb_array", max_steps=100) -> gym.Env:
+    env = gym.make(env_name, render_mode=render_mode, max_episode_steps=max_steps)
     env = FullyObsWrapper(env)
     env = ImgObsWrapper(env)
     env = FlattenObservation(env)
@@ -87,8 +87,8 @@ def main() -> None:
     optimizer_actor = optim.Adam(actor.parameters(), lr=ACTOR_LR)
     optimizer_critic = optim.Adam(critic.parameters(), lr=CRITIC_LR)
 
-    env = AsyncVectorEnv([lambda: make_env("rgb_array") for _ in range(NUM_ENVS)])
-    eval_env = make_env("human")  # Use human render mode for evaluation
+    env = AsyncVectorEnv([lambda: make_env("rgb_array", max_steps=100) for _ in range(NUM_ENVS)])
+    eval_env = make_env("human", max_steps=100)  # Use human render mode for evaluation
 
     obs, _ = env.reset(seed=0)
 
@@ -107,7 +107,7 @@ def main() -> None:
     current_rewards = np.zeros(NUM_ENVS)
     episode_steps = np.zeros(NUM_ENVS)
 
-    prev_values = torch.zeros(NUM_ENVS)
+    last_agent_pos = [None for _ in range(NUM_ENVS)]
     for step in tqdm(range(NUM_STEPS)):
         # Actor logic
         probs = actor(obs)
@@ -116,11 +116,27 @@ def main() -> None:
         log_probs = dist.log_prob(actions)
 
         # Critic logic
-        next_values = critic(obs).squeeze()
-        assert next_values.shape == (NUM_ENVS,)
+        prev_values_ = critic(obs).squeeze()
+        assert prev_values_.shape == (NUM_ENVS,)
 
         # Environment step
         next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
+
+        # this is an unbatched concept
+        # if 8 in observation["image"]:
+        #     reward += 0.005
+        # if action.item() == 2 and old_pos == new_pos:
+        #     reward -= 0.01
+
+        # apply to batched
+        agent_pos = env.get_attr("agent_pos")
+        for i in range(NUM_ENVS):
+            if 8 in next_obs[i]:
+                rewards[i] += 0.005
+            if last_agent_pos[i] is not None:
+                if agent_pos[i] == last_agent_pos[i]:
+                    rewards[i] -= 0.01
+            last_agent_pos[i] = agent_pos[i]
 
         # Update episode rewards and steps
         current_rewards += rewards
@@ -146,7 +162,12 @@ def main() -> None:
         assert dones.shape == (NUM_ENVS,)
         assert actions.shape == (NUM_ENVS,)
 
-        td_error = rewards + (0.99 * next_values * (1 - torch.tensor(dones, dtype=torch.float32))) - prev_values
+        # calc next values
+        next_values_ = critic(next_obs).squeeze()
+        assert next_values_.shape == (NUM_ENVS,)
+        td_error = rewards + (0.99 * next_values_ * (1 - torch.tensor(dones,
+                              dtype=torch.float32))) - prev_values_
+        # td_error = rewards + (0.99 * prev_values_ * (1 - torch.tensor(dones, dtype=torch.float32))) - prev_values
         assert td_error.shape == (NUM_ENVS,)
 
         critic_loss = td_error.pow(2).mean()
@@ -162,6 +183,8 @@ def main() -> None:
         # Update networks
         optimizer_critic.zero_grad()
         critic_loss.backward()
+        # clip critic loss
+        # torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
         # dot = make_dot(critic_loss, params=dict(critic.named_parameters()))
         # dot.render('model_graph_critic', format='png')
         # input()
@@ -169,26 +192,37 @@ def main() -> None:
 
         optimizer_actor.zero_grad()
         actor_loss.backward()
+        # clip actor loss
+        # torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
         optimizer_actor.step()
 
         # Store losses
         actor_losses.append(actor_loss.item())
         critic_losses.append(critic_loss.item())
 
-        # # Evaluation
-        # if step % EVAL_FREQ == 0:
-        #     eval_obs, _ = eval_env.reset()
+        # Evaluation
+        # if (step+1) % EVAL_FREQ == 0:
+        #     print("---------------------------")
+        #     eval_obs, _ = eval_env.reset(seed=0)
         #     eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
         #     eval_reward = 0
         #     eval_steps = 0
         #     done = False
 
+        #     count = 0
         #     while not done:
+        #         count += 1
+        #         if count > 200:
+        #             break
         #         eval_env.render()  # This will handle the visualization automatically
 
         #         with torch.no_grad():
         #             probs = actor(eval_obs)
-        #             action = torch.argmax(probs).item()
+        #             dist = Categorical(probs)
+        #             # action = torch.argmax(probs).item()
+
+        #             # sample action
+        #             action = dist.sample().item()
 
         #         eval_obs, reward, done, trunc, _ = eval_env.step(action)
         #         eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
@@ -209,7 +243,6 @@ def main() -> None:
 
         # Update observation
         obs = next_obs
-        prev_values = next_values.detach()
         total_steps += NUM_ENVS
 
     # Plot results
