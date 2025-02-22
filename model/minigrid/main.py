@@ -17,14 +17,14 @@ from torchviz import make_dot
 import numpy.typing as npt
 
 
-HIDDEN_SIZE = 256
-NUM_ENVS = 10
+HIDDEN_SIZE = 128
+NUM_ENVS = 25
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 ACTOR_LR = 1e-6
 CRITIC_LR = 1e-6
-NUM_STEPS = 16000
-EVAL_FREQ = 15900
-WINDOW_SIZE = 20
+NUM_STEPS = 20000
+EVAL_FREQ = 19000
+WINDOW_SIZE = 50
 RENDER_EVAL = False
 
 env_name = 'MiniGrid-Empty-5x5-v0'
@@ -70,6 +70,34 @@ class Critic(nn.Module):
         return out
 
 
+def one_hot_encode_observation(obs: np.ndarray) -> torch.Tensor:
+    """
+    Convert raw observation to one-hot encoded tensor.
+    Each 3 elements in obs represent (object, color, state).
+    object: one-hot size 11
+    color: one-hot size 6
+    state: one-hot size 3
+    """
+    assert len(obs) % 3 == 0, f"Observation length {len(obs)} not divisible by 3"
+
+    num_tuples = len(obs) // 3
+    encoded = []
+
+    for i in range(num_tuples):
+        obj = obs[i * 3]
+        color = obs[i * 3 + 1]
+        state = obs[i * 3 + 2]
+
+        obj_onehot = F.one_hot(torch.tensor(obj, dtype=torch.int64), num_classes=11)
+        color_onehot = F.one_hot(torch.tensor(color, dtype=torch.int64), num_classes=6)
+        # bug in docs where wrong class cardinality is documented
+        state_onehot = F.one_hot(torch.tensor(state, dtype=torch.int64), num_classes=4)
+
+        encoded.extend([obj_onehot, color_onehot, state_onehot])
+
+    return torch.cat(encoded).float()
+
+
 def main() -> None:
     torch.manual_seed(0)
 
@@ -78,7 +106,9 @@ def main() -> None:
     obs_shape: Optional[Tuple[int, ...]] = test_env.observation_space.shape
     if obs_shape is None:
         raise ValueError("Observation space shape cannot be None")
-    OBS_SIZE = obs_shape[0]
+    RAW_OBS_SIZE = obs_shape[0]
+    # New observation size after one-hot encoding
+    OBS_SIZE = (RAW_OBS_SIZE // 3) * (11 + 6 + 4)  # Each triple becomes 20 values
     test_env.close()
 
     # Initialize pygame for visualization
@@ -90,16 +120,14 @@ def main() -> None:
     optimizer_actor = optim.Adam(actor.parameters(), lr=ACTOR_LR)
     optimizer_critic = optim.Adam(critic.parameters(), lr=CRITIC_LR)
 
-    env = AsyncVectorEnv([lambda: make_env("rgb_array", max_steps=100) for _ in range(NUM_ENVS)])
+    env = AsyncVectorEnv([lambda: make_env(None, max_steps=100) for _ in range(NUM_ENVS)])
     eval_env = make_env("human", max_steps=100)  # Use human render mode for evaluation
 
-    obs: torch.Tensor
     obs, _ = env.reset(seed=0)
 
-    # Ensure observations are properly shaped
-    assert obs.shape[1] == OBS_SIZE, f"Expected observation size {OBS_SIZE}, got {obs.shape[1]}"
-    assert obs.shape == (NUM_ENVS, OBS_SIZE)
-    obs: torch.Tensor = torch.tensor(obs, dtype=torch.float32)
+    # Process observations
+    obs = np.stack([one_hot_encode_observation(o) for o in obs])
+    obs = torch.tensor(obs, dtype=torch.float32)
 
     # Performance tracking
     episode_rewards = []  # Remove maxlen to track all episodes
@@ -111,7 +139,7 @@ def main() -> None:
     episode_steps = np.zeros(NUM_ENVS)
 
     # NOTE: uncomment for dense reward
-    # last_agent_pos = [None for _ in range(NUM_ENVS)]
+    last_agent_pos = [None for _ in range(NUM_ENVS)]
     for step in tqdm(range(NUM_STEPS)):
         # Actor logic
         probs = actor(obs)
@@ -124,22 +152,21 @@ def main() -> None:
         assert prev_values_.shape == (NUM_ENVS,)
 
         # Environment step
-        next_obs: torch.Tensor
-        rewards: npt.NDArray[np.float32]
-        dones: npt.NDArray[np.bool_]
-        truncs: npt.NDArray[np.bool_]
-        infos: dict[str, Any]
         next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
         # NOTE: dense reward
-        # agent_pos = env.get_attr("agent_pos")
-        # for i in range(NUM_ENVS):
-        #     if 8 in next_obs[i]:
-        #         rewards[i] += 0.005
-        #     if last_agent_pos[i] is not None:
-        #         if agent_pos[i] == last_agent_pos[i]:
-        #             rewards[i] -= 0.01
-        #     last_agent_pos[i] = agent_pos[i]
+        agent_pos = env.get_attr("agent_pos")
+        for i in range(NUM_ENVS):
+            if 8 in next_obs[i]:
+                rewards[i] += 0.005
+            if last_agent_pos[i] is not None:
+                if agent_pos[i] == last_agent_pos[i]:
+                    rewards[i] -= 0.01
+            last_agent_pos[i] = agent_pos[i]
+
+        # Process the new observations
+        next_obs = np.stack([one_hot_encode_observation(o) for o in next_obs])
+        next_obs = torch.tensor(next_obs, dtype=torch.float32)
 
         # Update episode rewards and steps
         current_rewards += rewards
@@ -154,7 +181,6 @@ def main() -> None:
                 episode_steps[i] = 0
 
         rewards = torch.tensor(rewards, dtype=torch.float32)
-        next_obs = torch.tensor(next_obs, dtype=torch.float32)
 
         # Loss calculations
         assert rewards.shape == (NUM_ENVS,)
@@ -166,7 +192,6 @@ def main() -> None:
         assert next_values_.shape == (NUM_ENVS,)
         td_error = rewards + (0.99 * next_values_ * (1 - torch.tensor(dones,
                               dtype=torch.float32))) - prev_values_
-        # td_error = rewards + (0.99 * prev_values_ * (1 - torch.tensor(dones, dtype=torch.float32))) - prev_values
         assert td_error.shape == (NUM_ENVS,)
 
         critic_loss = td_error.pow(2).mean()
@@ -200,6 +225,8 @@ def main() -> None:
         # Evaluation
         if (step + 1) % EVAL_FREQ == 0 and RENDER_EVAL:
             eval_obs, _ = eval_env.reset(seed=0)
+            # Process eval observation
+            eval_obs = one_hot_encode_observation(eval_obs)
             eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
             eval_reward = 0
             eval_steps = 0
@@ -220,6 +247,8 @@ def main() -> None:
                     action = dist.sample().item()
 
                 eval_obs, reward, done, trunc, _ = eval_env.step(action)
+                # Process eval observation
+                eval_obs = one_hot_encode_observation(eval_obs)
                 eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
                 eval_reward += reward  # type: ignore
                 eval_steps += 1
@@ -257,7 +286,7 @@ def main() -> None:
     plt.ylabel("Reward")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("results.png")
 
 
 if __name__ == '__main__':
