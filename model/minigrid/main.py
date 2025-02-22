@@ -199,7 +199,6 @@ def main() -> None:
 
         # Evaluation
         if (step + 1) % EVAL_FREQ == 0 and RENDER_EVAL:
-            print("---------------------------")
             eval_obs, _ = eval_env.reset(seed=0)
             eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
             eval_reward = 0
@@ -216,7 +215,6 @@ def main() -> None:
                 with torch.no_grad():
                     probs = actor(eval_obs)
                     dist = Categorical(probs)
-                    # action = torch.argmax(probs).item()
 
                     # sample action
                     action = dist.sample().item()
