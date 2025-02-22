@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Tuple, Optional
 import numpy as np
 import gymnasium as gym
 from gymnasium.vector import AsyncVectorEnv
@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import pygame
 from tqdm import tqdm
 from torchviz import make_dot
+import numpy.typing as npt
+
 
 HIDDEN_SIZE = 256
 NUM_ENVS = 10
@@ -28,11 +30,11 @@ RENDER_EVAL = False
 env_name = 'MiniGrid-Empty-5x5-v0'
 
 
-def make_env(render_mode="rgb_array", max_steps=100) -> gym.Env:
-    env = gym.make(env_name, render_mode=render_mode, max_episode_steps=max_steps)
+def make_env(render_mode: str = "rgb_array", max_steps: int = 100) -> gym.Env:
+    env: gym.Env = gym.make(env_name, render_mode=render_mode, max_episode_steps=max_steps)
     env = FullyObsWrapper(env)
     env = ImgObsWrapper(env)
-    env = FlattenObservation(env)
+    env: FlattenObservation = FlattenObservation(env)
     return env
 
 
@@ -48,7 +50,8 @@ class Actor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.softmax(self.net(x), dim=-1)
+        result: torch.Tensor = F.softmax(self.net(x), dim=-1)
+        return result
 
 
 class Critic(nn.Module):
@@ -63,7 +66,8 @@ class Critic(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        out: torch.Tensor = self.net(x)
+        return out
 
 
 def main() -> None:
@@ -71,7 +75,10 @@ def main() -> None:
 
     # Get observation size from environment
     test_env = make_env()
-    OBS_SIZE = test_env.observation_space.shape[0]
+    obs_shape: Optional[Tuple[int, ...]] = test_env.observation_space.shape
+    if obs_shape is None:
+        raise ValueError("Observation space shape cannot be None")
+    OBS_SIZE = obs_shape[0]
     test_env.close()
 
     # Initialize pygame for visualization
@@ -86,12 +93,13 @@ def main() -> None:
     env = AsyncVectorEnv([lambda: make_env("rgb_array", max_steps=100) for _ in range(NUM_ENVS)])
     eval_env = make_env("human", max_steps=100)  # Use human render mode for evaluation
 
+    obs: torch.Tensor
     obs, _ = env.reset(seed=0)
 
     # Ensure observations are properly shaped
     assert obs.shape[1] == OBS_SIZE, f"Expected observation size {OBS_SIZE}, got {obs.shape[1]}"
     assert obs.shape == (NUM_ENVS, OBS_SIZE)
-    obs = torch.tensor(obs, dtype=torch.float32)
+    obs: torch.Tensor = torch.tensor(obs, dtype=torch.float32)
 
     # Performance tracking
     episode_rewards = []  # Remove maxlen to track all episodes
@@ -116,6 +124,11 @@ def main() -> None:
         assert prev_values_.shape == (NUM_ENVS,)
 
         # Environment step
+        next_obs: torch.Tensor
+        rewards: npt.NDArray[np.float32]
+        dones: npt.NDArray[np.bool_]
+        truncs: npt.NDArray[np.bool_]
+        infos: dict[str, Any]
         next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
         # NOTE: dense reward
@@ -134,7 +147,7 @@ def main() -> None:
 
         # Handle episode completion
         for i in range(NUM_ENVS):
-            if dones[i] or truncs[i]:
+            if dones[i] or truncs[i]:  # type: ignore
                 episode_rewards.append(current_rewards[i])
                 success_rate.append(1.0 if current_rewards[i] > 0.0 else 0.0)
                 current_rewards[i] = 0
@@ -145,7 +158,7 @@ def main() -> None:
 
         # Loss calculations
         assert rewards.shape == (NUM_ENVS,)
-        assert dones.shape == (NUM_ENVS,)
+        assert dones.shape == (NUM_ENVS,)  # type: ignore
         assert actions.shape == (NUM_ENVS,)
 
         # calc next values
@@ -185,7 +198,7 @@ def main() -> None:
         critic_losses.append(critic_loss.item())
 
         # Evaluation
-        if (step+1) % EVAL_FREQ == 0 and RENDER_EVAL:
+        if (step + 1) % EVAL_FREQ == 0 and RENDER_EVAL:
             print("---------------------------")
             eval_obs, _ = eval_env.reset(seed=0)
             eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
@@ -210,7 +223,7 @@ def main() -> None:
 
                 eval_obs, reward, done, trunc, _ = eval_env.step(action)
                 eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
-                eval_reward += reward
+                eval_reward += reward  # type: ignore
                 eval_steps += 1
                 done = done or trunc
 
@@ -236,10 +249,10 @@ def main() -> None:
     plt.ylabel("Loss")
 
     plt.subplot(143)
-    print(len(episode_rewards))
-    input()
     if len(episode_rewards) >= WINDOW_SIZE:
-        smoothed_rewards = np.convolve(episode_rewards, np.ones(WINDOW_SIZE)/WINDOW_SIZE, mode='valid')
+        smoothed_rewards = np.convolve(episode_rewards,
+                                       np.ones(WINDOW_SIZE)/WINDOW_SIZE,
+                                       mode='valid')
         plt.plot(smoothed_rewards)
     plt.title("Episode Rewards")
     plt.xlabel("Episode")
