@@ -32,9 +32,9 @@ CRITIC_LR = 2e-6
 NUM_STEPS = 2000
 EVAL_FREQ = 1900
 WINDOW_SIZE = 50
-RENDER_EVAL = False
+RENDER_EVAL = True
 
-env_name = 'MiniGrid-Empty-5x5-v0'
+env_name = 'MiniGrid-Empty-8x8-v0'
 
 
 def make_env(render_mode: str | None = "rgb_array", max_steps: int = 100) -> gym.Env:
@@ -243,6 +243,7 @@ def main() -> None:
 
             # Evaluation
             if (step + 1) % EVAL_FREQ == 0 and RENDER_EVAL:
+                input("Ready for eval?")
                 eval_obs, _ = eval_env.reset(seed=0)
                 # Process eval observation
                 eval_obs = one_hot_encode_observation(eval_obs)
