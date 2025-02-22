@@ -26,7 +26,7 @@ RENDER_EVAL = True
 env_name = 'MiniGrid-Empty-8x8-v0'
 
 def make_env() -> gym.Env:
-    env = gym.make(env_name)
+    env = gym.make(env_name, render_mode="human")
     env = FullyObsWrapper(env)
     env = ImgObsWrapper(env)
     env = FlattenObservation(env)
