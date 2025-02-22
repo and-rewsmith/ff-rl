@@ -37,7 +37,7 @@ RENDER_EVAL = False
 env_name = 'MiniGrid-Empty-5x5-v0'
 
 
-def make_env(render_mode: str = "rgb_array", max_steps: int = 100) -> gym.Env:
+def make_env(render_mode: str | None = "rgb_array", max_steps: int = 100) -> gym.Env:
     env: gym.Env = gym.make(env_name, render_mode=render_mode, max_episode_steps=max_steps)
     env = FullyObsWrapper(env)
     env = ImgObsWrapper(env)
@@ -133,11 +133,12 @@ def main() -> None:
         env = AsyncVectorEnv([lambda: make_env(None, max_steps=100) for _ in range(NUM_ENVS)])
         eval_env = make_env("human", max_steps=100)
 
-        obs, _ = env.reset(seed=0)
+        obs_array: np.ndarray
+        obs_array, _ = env.reset(seed=0)
 
         # Process observations
-        obs = np.stack([one_hot_encode_observation(o) for o in obs])
-        obs = torch.tensor(obs, dtype=torch.float32).to(DEVICE)
+        obs_array = np.stack([one_hot_encode_observation(o) for o in obs_array])
+        obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE) # type: ignore
 
         # Performance tracking
         episode_rewards = []
@@ -166,7 +167,12 @@ def main() -> None:
             assert prev_values_.shape == (NUM_ENVS,)
 
             # Environment step
-            next_obs, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
+            next_obs_array: np.ndarray
+            rewards: np.ndarray
+            dones: np.ndarray
+            truncs: np.ndarray
+            infos: dict
+            next_obs_array, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
 
             # NOTE: dense reward
             # agent_pos = env.get_attr("agent_pos")
@@ -179,8 +185,8 @@ def main() -> None:
             #     last_agent_pos[i] = agent_pos[i]
 
             # Process the new observations
-            next_obs = np.stack([one_hot_encode_observation(o) for o in next_obs])
-            next_obs = torch.tensor(next_obs, dtype=torch.float32).to(DEVICE)
+            next_obs_array = np.stack([one_hot_encode_observation(o) for o in next_obs_array])
+            next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE) # type: ignore
 
             # Update episode rewards and steps
             current_rewards += rewards
@@ -193,7 +199,7 @@ def main() -> None:
                     current_rewards[i] = 0
                     episode_steps[i] = 0
 
-            rewards = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)
+            rewards: torch.Tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE) # type: ignore
 
             # Loss calculations
             assert rewards.shape == (NUM_ENVS,)
