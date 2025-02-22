@@ -16,6 +16,13 @@ from tqdm import tqdm
 from torchviz import make_dot
 import numpy.typing as npt
 
+# Device configuration
+if torch.cuda.is_available():
+    DEVICE = torch.device('cuda')
+elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+    DEVICE = torch.device('mps')
+else:
+    raise RuntimeError("No GPU (CUDA or MPS) available")
 
 HIDDEN_SIZE = 128
 NUM_ENVS = 25
@@ -115,8 +122,8 @@ def main() -> None:
     pygame.init()
 
     # Initialize networks and environments
-    actor = Actor(OBS_SIZE, HIDDEN_SIZE, NUM_ACTIONS)
-    critic = Critic(OBS_SIZE, HIDDEN_SIZE)
+    actor = Actor(OBS_SIZE, HIDDEN_SIZE, NUM_ACTIONS).to(DEVICE)
+    critic = Critic(OBS_SIZE, HIDDEN_SIZE).to(DEVICE)
     optimizer_actor = optim.Adam(actor.parameters(), lr=ACTOR_LR)
     optimizer_critic = optim.Adam(critic.parameters(), lr=CRITIC_LR)
 
@@ -127,7 +134,7 @@ def main() -> None:
 
     # Process observations
     obs = np.stack([one_hot_encode_observation(o) for o in obs])
-    obs = torch.tensor(obs, dtype=torch.float32)
+    obs = torch.tensor(obs, dtype=torch.float32).to(DEVICE)
 
     # Performance tracking
     episode_rewards = []
@@ -170,7 +177,7 @@ def main() -> None:
 
         # Process the new observations
         next_obs = np.stack([one_hot_encode_observation(o) for o in next_obs])
-        next_obs = torch.tensor(next_obs, dtype=torch.float32)
+        next_obs = torch.tensor(next_obs, dtype=torch.float32).to(DEVICE)
 
         # Update episode rewards and steps
         current_rewards += rewards
@@ -183,7 +190,7 @@ def main() -> None:
                 current_rewards[i] = 0
                 episode_steps[i] = 0
 
-        rewards = torch.tensor(rewards, dtype=torch.float32)
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)
 
         # Loss calculations
         assert rewards.shape == (NUM_ENVS,)
@@ -194,7 +201,7 @@ def main() -> None:
         next_values_ = critic(next_obs).squeeze()
         assert next_values_.shape == (NUM_ENVS,)
         td_error = rewards + (0.99 * next_values_ * (1 - torch.tensor(dones,
-                              dtype=torch.float32))) - prev_values_
+                              dtype=torch.float32).to(DEVICE))) - prev_values_
         assert td_error.shape == (NUM_ENVS,)
 
         critic_loss = td_error.pow(2).mean()
@@ -230,7 +237,7 @@ def main() -> None:
             eval_obs, _ = eval_env.reset(seed=0)
             # Process eval observation
             eval_obs = one_hot_encode_observation(eval_obs)
-            eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
+            eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0).to(DEVICE)
             eval_reward = 0
             eval_steps = 0
             done = False
@@ -252,7 +259,7 @@ def main() -> None:
                 eval_obs, reward, done, trunc, _ = eval_env.step(action)
                 # Process eval observation
                 eval_obs = one_hot_encode_observation(eval_obs)
-                eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0)
+                eval_obs = torch.tensor(eval_obs, dtype=torch.float32).unsqueeze(0).to(DEVICE)
                 eval_reward += reward  # type: ignore
                 eval_steps += 1
                 done = done or trunc
