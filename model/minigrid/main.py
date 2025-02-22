@@ -27,15 +27,15 @@ else:
     raise RuntimeError("No GPU (CUDA or MPS) available")
 
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
-NUM_ENVS = 2
-NUM_STEPS = 2000
-EVAL_FREQ = 1900
+NUM_ENVS = 25
+NUM_STEPS = 20000
+EVAL_FREQ = 19000
 RENDER_EVAL = False
 WINDOW_SIZE = 50
 
 HIDDEN_SIZE = 128
-ACTOR_LR = 1e-6
-CRITIC_LR = 2e-6
+ACTOR_LR = 1e-5
+CRITIC_LR = 2e-5
 
 RESERVOIR_SIZE = 1000
 STATE_LR = 1e-6
@@ -176,36 +176,22 @@ def main() -> None:
             # don't do this for the first step since no steps have been taken, so reward will be unset
             if step != 0:
                 rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
-
-                # handle pos
-                actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
-                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
-
-                # handle neg
-                negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-                while (negative_actions == actions).any():
-                    negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-                negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
-                sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
-
-                state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
-                state_activations_prev = state.activations.detach().clone()
             else:
                 rewards = torch.zeros(NUM_ENVS, 1, device=DEVICE)
 
-                # handle pos
-                actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
-                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+            # handle pos
+            actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
+            sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
 
-                # handle neg
+            # handle neg
+            negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+            while (negative_actions == actions).any():
                 negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-                while (negative_actions == actions).any():
-                    negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-                negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
-                sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
+            negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
+            sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
 
-                state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
-                state_activations_prev = state.activations.detach().clone()
+            state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
+            state_activations_prev = state.activations.detach().clone()
 
             # make this append the taken action
             # append the action to the obs -- for neg action, sample random action but it cannot be same as pos action
