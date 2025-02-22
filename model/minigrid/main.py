@@ -21,7 +21,7 @@ HIDDEN_SIZE = 128
 NUM_ENVS = 25
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 ACTOR_LR = 1e-6
-CRITIC_LR = 1e-6
+CRITIC_LR = 2e-6
 NUM_STEPS = 20000
 EVAL_FREQ = 19000
 WINDOW_SIZE = 50
@@ -130,8 +130,7 @@ def main() -> None:
     obs = torch.tensor(obs, dtype=torch.float32)
 
     # Performance tracking
-    episode_rewards = []  # Remove maxlen to track all episodes
-    success_rate = []    # Remove maxlen to track all episodes
+    episode_rewards = []
     actor_losses = []
     critic_losses = []
     total_steps = 0
@@ -141,6 +140,11 @@ def main() -> None:
     # NOTE: uncomment for dense reward
     last_agent_pos = [None for _ in range(NUM_ENVS)]
     for step in tqdm(range(NUM_STEPS)):
+        if step == 5000:
+            # lower learning rate
+            optimizer_actor.param_groups[0]['lr'] = 1e-7
+            optimizer_critic.param_groups[0]['lr'] = 2e-7
+
         # Actor logic
         probs = actor(obs)
         dist = Categorical(probs)
@@ -159,10 +163,10 @@ def main() -> None:
         for i in range(NUM_ENVS):
             if 8 in next_obs[i]:
                 rewards[i] += 0.005
-            if last_agent_pos[i] is not None:
-                if agent_pos[i] == last_agent_pos[i]:
-                    rewards[i] -= 0.01
-            last_agent_pos[i] = agent_pos[i]
+            # if last_agent_pos[i] is not None:
+            #     if agent_pos[i] == last_agent_pos[i]:
+            #         rewards[i] -= 0.01
+            # last_agent_pos[i] = agent_pos[i]
 
         # Process the new observations
         next_obs = np.stack([one_hot_encode_observation(o) for o in next_obs])
@@ -176,7 +180,6 @@ def main() -> None:
         for i in range(NUM_ENVS):
             if dones[i] or truncs[i]:  # type: ignore
                 episode_rewards.append(current_rewards[i])
-                success_rate.append(1.0 if current_rewards[i] > 0.0 else 0.0)
                 current_rewards[i] = 0
                 episode_steps[i] = 0
 
