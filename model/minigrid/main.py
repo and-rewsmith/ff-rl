@@ -29,7 +29,7 @@ else:
 
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 NUM_ENVS = 10
-NUM_STEPS = 40000
+NUM_STEPS = 140000
 EVAL_FREQ = NUM_STEPS - 1
 RENDER_EVAL = False
 WINDOW_SIZE = 50
@@ -38,8 +38,8 @@ HIDDEN_SIZE = 128
 ACTOR_LR = 1e-6
 CRITIC_LR = 2e-6
 
-RESERVOIR_SIZE = 1000
-STATE_LR = 1e-6
+RESERVOIR_SIZE = 500
+STATE_LR = 1e-5
 STATE_LOSS_THRESHOLD = 1.5
 
 env_name = 'MiniGrid-Empty-8x8-v0'
@@ -207,6 +207,7 @@ def main() -> None:
         total_steps = 0
         current_rewards = np.zeros(NUM_ENVS)
         episode_steps = np.zeros(NUM_ENVS)
+        raw_reward_sum = 0.0
 
         # NOTE: uncomment for dense reward
         last_agent_pos = [None for _ in range(NUM_ENVS)]
@@ -228,7 +229,7 @@ def main() -> None:
 
             # Environment step
             next_obs_array: np.ndarray
-            rewards: np.ndarray
+            # rewards: np.ndarray
             dones: np.ndarray
             truncs: np.ndarray
             infos: dict
@@ -238,9 +239,14 @@ def main() -> None:
 
             if True:
                 rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
+
+                # Update raw reward sum (before adding state rewards)
+                raw_reward_sum += rewards.sum().item()
+
                 # log the raw reward (take into account the batch dimension)
                 wandb.log({
-                    "raw_reward": rewards.squeeze().mean().item()
+                    "raw_reward": rewards.squeeze().mean().item(),
+                    "raw_reward_sum": raw_reward_sum
                 })
 
                 # handle pos
@@ -259,7 +265,7 @@ def main() -> None:
 
                 # add to existing rewards a state reward that is magnitude of activations in EBM
                 from model.ff.ff import layer_activations_to_badness
-                state_rewards = (layer_activations_to_badness(state_activations_next).detach().unsqueeze(1) - STATE_LOSS_THRESHOLD) * .01
+                state_rewards = (layer_activations_to_badness(state_activations_next).detach().unsqueeze(1) - STATE_LOSS_THRESHOLD) * .1
                 # state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_next).detach().unsqueeze(1))
                 wandb.log({
                     "state_reward": state_rewards.squeeze().mean().item()
