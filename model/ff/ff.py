@@ -30,7 +30,8 @@ class FFReservoir(nn.Module):
         self.loss_threshold = loss_threshold
 
         self.weights = nn.Linear(input_dim+reservoir_size, reservoir_size, bias=True)
-        self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
+        # self.weights.weight.data.normal_(0, 1/np.sqrt(reservoir_size))
+        torch.nn.init.sparse_(self.weights.weight, sparsity=0.95)
         self.activations = torch.zeros(batch_size, reservoir_size, device=device)
         self.optimizer = torch.optim.AdamW(self.weights.parameters(), lr=learning_rate)
 
