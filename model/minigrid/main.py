@@ -29,17 +29,17 @@ else:
 
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 NUM_ENVS = 10
-NUM_STEPS = 10000
+NUM_STEPS = 40000
 EVAL_FREQ = NUM_STEPS - 1
 RENDER_EVAL = False
 WINDOW_SIZE = 50
 
 HIDDEN_SIZE = 128
-ACTOR_LR = 1e-5
-CRITIC_LR = 2e-5
+ACTOR_LR = 1e-6
+CRITIC_LR = 2e-6
 
 RESERVOIR_SIZE = 1000
-STATE_LR = 1e-5
+STATE_LR = 1e-6
 STATE_LOSS_THRESHOLD = 1.5
 
 env_name = 'MiniGrid-Empty-8x8-v0'
@@ -259,8 +259,8 @@ def main() -> None:
 
                 # add to existing rewards a state reward that is magnitude of activations in EBM
                 from model.ff.ff import layer_activations_to_badness
-                # state_rewards = (layer_activations_to_badness(state_activations_next).detach().unsqueeze(1) - STATE_LOSS_THRESHOLD) * .01
-                state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_next).detach().unsqueeze(1))
+                state_rewards = (layer_activations_to_badness(state_activations_next).detach().unsqueeze(1) - STATE_LOSS_THRESHOLD) * .01
+                # state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_next).detach().unsqueeze(1))
                 wandb.log({
                     "state_reward": state_rewards.squeeze().mean().item()
                 })
