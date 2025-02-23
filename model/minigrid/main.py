@@ -29,20 +29,20 @@ else:
 
 NUM_ACTIONS = 3  # MiniGrid has 3 actions: left, right, forward
 NUM_ENVS = 10
-NUM_STEPS = 15000
-EVAL_FREQ = 14000
+NUM_STEPS = 3000
+EVAL_FREQ = 3000 - 1
 RENDER_EVAL = False
 WINDOW_SIZE = 50
 
 HIDDEN_SIZE = 128
-ACTOR_LR = 1e-6
-CRITIC_LR = 2e-6
+ACTOR_LR = 1e-5
+CRITIC_LR = 2e-5
 
 RESERVOIR_SIZE = 1000
-STATE_LR = 1e-4
+STATE_LR = 1e-5
 STATE_LOSS_THRESHOLD = 1.5
 
-env_name = 'MiniGrid-Empty-5x5-v0'
+env_name = 'MiniGrid-Empty-8x8-v0'
 
 
 def make_env(render_mode: str | None = "rgb_array", max_steps: int = 100) -> gym.Env:
@@ -170,12 +170,35 @@ def main() -> None:
 
         env = AsyncVectorEnv([lambda: make_env(None, max_steps=100) for _ in range(NUM_ENVS)])
         eval_env = make_env("human", max_steps=100)
-
         obs_array: np.ndarray
         obs_array, _ = env.reset(seed=0)
-
-        # Process observations
         obs_array = np.stack([one_hot_encode_observation(o) for o in obs_array])
+
+        ########
+        obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
+        obs_array, rewards, dones, truncs, infos = env.step(torch.zeros(NUM_ENVS).cpu().numpy())
+        # pass through ff
+        rewards = torch.zeros(NUM_ENVS, 1, device=DEVICE)
+
+        # handle pos
+        actions_onehot = F.one_hot(torch.zeros(NUM_ENVS, dtype=torch.int64), num_classes=NUM_ACTIONS).to(DEVICE)
+        sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+
+        # handle neg
+        negative_actions = torch.randint(1, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
+        negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
+        sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
+
+        state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
+        state_activations = state.activations.detach().clone()
+
+        # add to existing rewards a state reward that is magnitude of activations in EBM
+        from model.ff.ff import layer_activations_to_badness
+        state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations).detach().unsqueeze(1))
+        assert state_rewards.shape == (NUM_ENVS, 1)
+        assert rewards.shape == (NUM_ENVS, 1)
+        rewards += state_rewards
+        ############
 
         # Performance tracking
         episode_rewards = []
@@ -194,52 +217,13 @@ def main() -> None:
             #     optimizer_critic.param_groups[0]['lr'] = optimizer_critic.param_groups[0]['lr'] * 0.1
 
             # Actor logic
-            probs = actor(state.activations.detach())
+            probs = actor(state_activations.detach())
             dist = Categorical(probs)
             actions = dist.sample()
             log_probs = dist.log_prob(actions)
 
-            obs = torch.tensor(obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
-
-            # pass through ff
-            if step != 0:
-                rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
-            else:
-                rewards = torch.zeros(NUM_ENVS, 1, device=DEVICE)
-
-            # handle pos
-            actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
-            sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
-
-            # handle neg
-            negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-            while (negative_actions == actions).any():
-                negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
-            negative_actions_onehot = F.one_hot(negative_actions, num_classes=NUM_ACTIONS)
-            sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
-
-            state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
-            state_activations_prev = state.activations.detach().clone()
-
-            # add to existing rewards a state reward that is magnitude of activations in EBM
-            from model.ff.ff import layer_activations_to_badness
-            state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_prev).detach().unsqueeze(1))
-            assert state_rewards.shape == (NUM_ENVS, 1)
-            assert rewards.shape == (NUM_ENVS, 1)
-            rewards += state_rewards
-
-            # make this append the taken action
-            # append the action to the obs -- for neg action, sample random action but it cannot be same as pos action
-            # pos_obs = torch.cat((obs, actions.unsqueeze(1)), dim=1)
-            # neg_action = torch.randint(0, NUM_ACTIONS, (NUM_ENVS, 1)).to(DEVICE)
-            # while (neg_action == actions.unsqueeze(1)).any():
-            #     neg_action = torch.randint(0, NUM_ACTIONS, (NUM_ENVS, 1)).to(DEVICE)
-            # assert neg_action.shape == (NUM_ENVS, 1)
-            # neg_obs = torch.cat((obs, neg_action), dim=1)
-            # state.process_timestep(pos_obs, neg_obs, training=True)
-
             # Critic logic
-            prev_values_ = critic(state_activations_prev).squeeze()
+            prev_values_ = critic(state_activations.detach()).squeeze()
             assert prev_values_.shape == (NUM_ENVS,)
 
             # Environment step
@@ -249,6 +233,8 @@ def main() -> None:
             truncs: np.ndarray
             infos: dict
             next_obs_array, rewards, dones, truncs, infos = env.step(actions.cpu().numpy())
+            next_obs_array = np.stack([one_hot_encode_observation(o) for o in next_obs_array])
+            next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
             if True:
                 rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(DEVICE)  # Add dimension
@@ -259,7 +245,7 @@ def main() -> None:
 
                 # handle pos
                 actions_onehot = F.one_hot(actions, num_classes=NUM_ACTIONS)
-                sensory_input_pos = torch.cat((obs, actions_onehot, rewards), dim=1)
+                sensory_input_pos = torch.cat((next_obs, actions_onehot, rewards), dim=1)
 
                 # handle neg
                 negative_actions = torch.randint(0, NUM_ACTIONS, (NUM_ENVS,), device=DEVICE)
@@ -269,17 +255,19 @@ def main() -> None:
                 sensory_input_neg = torch.cat((obs, negative_actions_onehot, rewards), dim=1)
 
                 state.process_timestep(sensory_input_pos, sensory_input_neg, training=True)
-                state_activations_prev = state.activations.detach().clone()
+                state_activations_next = state.activations.detach().clone()
 
                 # add to existing rewards a state reward that is magnitude of activations in EBM
                 from model.ff.ff import layer_activations_to_badness
-                state_rewards = torch.zeros_like(layer_activations_to_badness(state_activations_prev).detach().unsqueeze(1))
+                state_rewards = (layer_activations_to_badness(state_activations_next).detach().unsqueeze(1) - STATE_LOSS_THRESHOLD) * .01
+                wandb.log({
+                    "state_reward": state_rewards.squeeze().mean().item()
+                })
                 assert state_rewards.shape == (NUM_ENVS, 1)
                 assert rewards.shape == (NUM_ENVS, 1)
                 rewards += state_rewards
                 rewards = rewards.squeeze()
 
-                state_activations_next = state.activations.detach().clone()
 
 
             # NOTE: dense reward
@@ -291,11 +279,6 @@ def main() -> None:
             #         if agent_pos[i] == last_agent_pos[i]:
             #             rewards[i] -= 0.01
             #     last_agent_pos[i] = agent_pos[i]
-
-
-            # Process the new observations
-            next_obs_array = np.stack([one_hot_encode_observation(o) for o in next_obs_array])
-            next_obs = torch.tensor(next_obs_array, dtype=torch.float32).to(DEVICE)  # type: ignore
 
             # Update episode rewards and steps
             current_rewards += rewards.squeeze().cpu().numpy()
@@ -397,6 +380,7 @@ def main() -> None:
 
             # Update observation
             obs = next_obs
+            state_activations = state_activations_next
             total_steps += NUM_ENVS
 
         # Plot results
